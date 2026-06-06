@@ -1,0 +1,9 @@
+.env
+playlist.txt
+logs/*.log
+logs/*.pid
+logs/*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
