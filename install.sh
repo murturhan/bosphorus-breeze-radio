@@ -9,7 +9,7 @@
 # - Creates required folders.
 # - Sets executable permissions on scripts.
 # - Creates .env from .env.example if .env does not exist.
-# - Installs the systemd service.
+# - Installs the systemd services.
 # - Enables auto start on reboot.
 #
 # Run from the repository directory:
@@ -19,8 +19,11 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="bosphorus-radio.service"
+ADMIN_SERVICE_NAME="bosphorus-radio-admin.service"
 SERVICE_SOURCE="${SCRIPT_DIR}/systemd/${SERVICE_NAME}"
+ADMIN_SERVICE_SOURCE="${SCRIPT_DIR}/systemd/${ADMIN_SERVICE_NAME}"
 SERVICE_TARGET="/etc/systemd/system/${SERVICE_NAME}"
+ADMIN_SERVICE_TARGET="/etc/systemd/system/${ADMIN_SERVICE_NAME}"
 LOG_DIR="${SCRIPT_DIR}/logs"
 
 log() {
@@ -68,12 +71,18 @@ prepare_files() {
 
     log "Setting executable permissions on scripts."
     chmod +x "${SCRIPT_DIR}/install.sh" "${SCRIPT_DIR}/update_playlist.sh" "${SCRIPT_DIR}/stream.sh"
+    if [[ -f "${SCRIPT_DIR}/test_local.sh" ]]; then
+        chmod +x "${SCRIPT_DIR}/test_local.sh"
+    fi
+    if [[ -f "${SCRIPT_DIR}/radio_admin.py" ]]; then
+        chmod +x "${SCRIPT_DIR}/radio_admin.py"
+    fi
 
     if [[ ! -f "${SCRIPT_DIR}/.env" ]]; then
         log "Creating .env from .env.example."
         cp "${SCRIPT_DIR}/.env.example" "${SCRIPT_DIR}/.env"
         chmod 600 "${SCRIPT_DIR}/.env"
-        log "Edit ${SCRIPT_DIR}/.env and add your real YouTube stream key before starting the service."
+        log "Use the web admin panel or edit ${SCRIPT_DIR}/.env before streaming."
     else
         log ".env already exists; leaving it unchanged."
     fi
@@ -82,18 +91,26 @@ prepare_files() {
 install_service() {
     [[ -f "${SERVICE_SOURCE}" ]] || fail "Missing systemd service file: ${SERVICE_SOURCE}"
 
-    log "Installing systemd service: ${SERVICE_TARGET}"
+    log "Installing stream service: ${SERVICE_TARGET}"
     cp "${SERVICE_SOURCE}" "${SERVICE_TARGET}"
-
-    # Replace the repository path in the service file with the actual install path.
-    # This keeps the repository portable no matter where it is cloned.
     sed -i "s|/opt/bosphorus-breeze-radio|${SCRIPT_DIR}|g" "${SERVICE_TARGET}"
+
+    if [[ -f "${ADMIN_SERVICE_SOURCE}" ]]; then
+        log "Installing admin panel service: ${ADMIN_SERVICE_TARGET}"
+        cp "${ADMIN_SERVICE_SOURCE}" "${ADMIN_SERVICE_TARGET}"
+        sed -i "s|/opt/bosphorus-breeze-radio|${SCRIPT_DIR}|g" "${ADMIN_SERVICE_TARGET}"
+    fi
 
     log "Reloading systemd."
     systemctl daemon-reload
 
-    log "Enabling auto start on reboot."
+    log "Enabling stream auto start on reboot."
     systemctl enable "${SERVICE_NAME}"
+
+    if [[ -f "${ADMIN_SERVICE_TARGET}" ]]; then
+        log "Enabling admin panel auto start on reboot."
+        systemctl enable "${ADMIN_SERVICE_NAME}"
+    fi
 }
 
 print_next_steps() {
@@ -101,26 +118,21 @@ print_next_steps() {
 
 Installation complete.
 
-Next steps:
-1. Put .mp3, .m4a, or .wav files into:
-   ${SCRIPT_DIR}/music
-
-2. Replace the starter image with your own JPG:
-   ${SCRIPT_DIR}/assets/background.jpg
-
-3. Edit your YouTube stream key:
-   sudo nano ${SCRIPT_DIR}/.env
-
-4. Test playlist generation:
-   ${SCRIPT_DIR}/update_playlist.sh
-
-5. Start streaming:
-   sudo systemctl start ${SERVICE_NAME}
-
 Useful commands:
+   sudo systemctl start ${ADMIN_SERVICE_NAME}
    sudo systemctl status ${SERVICE_NAME}
    sudo journalctl -u ${SERVICE_NAME} -f
    sudo systemctl stop ${SERVICE_NAME}
+
+Web admin panel:
+   1. Start the admin panel service:
+      sudo systemctl start ${ADMIN_SERVICE_NAME}
+
+   2. From your own computer, open an SSH tunnel:
+      ssh -L 8788:127.0.0.1:8788 ubuntu@YOUR_SERVER_IP
+
+   3. Open this in your browser:
+      http://127.0.0.1:8788
 
 EOF
 }
