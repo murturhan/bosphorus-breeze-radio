@@ -1,0 +1,20 @@
+[Unit]
+Description=Bosphorus Breeze Radio Admin Panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bosphorus-breeze-radio
+ExecStart=/usr/bin/python3 /opt/bosphorus-breeze-radio/radio_admin.py
+Restart=always
+RestartSec=5
+
+# The admin panel writes .env, uploads files, and starts/stops the radio service.
+# It binds only to 127.0.0.1, so use an SSH tunnel to open it.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bosphorus-radio-admin
+
+[Install]
+WantedBy=multi-user.target
