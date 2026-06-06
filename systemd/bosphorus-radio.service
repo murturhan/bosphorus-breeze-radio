@@ -1,0 +1,38 @@
+[Unit]
+Description=Bosphorus Breeze Radio 24/7 YouTube Live Stream
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# install.sh replaces /opt/bosphorus-breeze-radio with the real repository path.
+WorkingDirectory=/opt/bosphorus-breeze-radio
+ExecStart=/opt/bosphorus-breeze-radio/stream.sh
+
+# Restart the stream automatically if FFmpeg exits or crashes.
+Restart=always
+RestartSec=10
+
+# Give the process time to stop cleanly.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Journal-friendly logging. View logs with:
+#   sudo journalctl -u bosphorus-radio -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bosphorus-radio
+
+# Useful production limits for a small VPS.
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+# Light service hardening. This avoids surprising filesystem restrictions when
+# the repository is cloned under /home/ubuntu or another beginner-friendly path.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
