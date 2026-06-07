@@ -18,6 +18,7 @@ PLAYLIST_FILE="${SCRIPT_DIR}/playlist.txt"
 BACKGROUND_IMAGE="${SCRIPT_DIR}/assets/background.jpg"
 LOG_DIR="${SCRIPT_DIR}/logs"
 TEST_LOG="${LOG_DIR}/test.log"
+ENV_FILE="${SCRIPT_DIR}/.env"
 
 mkdir -p "${LOG_DIR}"
 
@@ -31,8 +32,30 @@ fail() {
     exit 1
 }
 
+load_safe_settings() {
+    if [[ -f "${ENV_FILE}" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "${ENV_FILE}"
+        set +a
+    fi
+
+    VIDEO_WIDTH="${VIDEO_WIDTH:-854}"
+    VIDEO_HEIGHT="${VIDEO_HEIGHT:-480}"
+    VIDEO_FPS="${VIDEO_FPS:-24}"
+    VIDEO_BITRATE="${VIDEO_BITRATE:-900k}"
+    VIDEO_MAXRATE="${VIDEO_MAXRATE:-1100k}"
+    VIDEO_BUFSIZE="${VIDEO_BUFSIZE:-2200k}"
+    X264_PRESET="${X264_PRESET:-ultrafast}"
+    FFMPEG_THREADS="${FFMPEG_THREADS:-1}"
+    AUDIO_BITRATE="${AUDIO_BITRATE:-128k}"
+    AUDIO_RATE="${AUDIO_RATE:-44100}"
+    AUDIO_CHANNELS="${AUDIO_CHANNELS:-2}"
+}
+
 main() {
     log "Starting safe local test. This will not stream to YouTube."
+    load_safe_settings
 
     command -v ffmpeg >/dev/null 2>&1 || fail "ffmpeg is not installed. Run sudo ./install.sh first."
     command -v ffprobe >/dev/null 2>&1 || fail "ffprobe is not installed. Run sudo ./install.sh first."
@@ -51,7 +74,7 @@ main() {
         || fail "FFmpeg cannot read assets/background.jpg."
 
     log "Running 5-second FFmpeg pipeline test."
-    ffmpeg \
+    timeout 25s ffmpeg \
         -hide_banner \
         -loglevel warning \
         -stream_loop -1 \
@@ -59,29 +82,30 @@ main() {
         -safe 0 \
         -i "${PLAYLIST_FILE}" \
         -loop 1 \
-        -framerate 30 \
+        -framerate "${VIDEO_FPS}" \
         -i "${BACKGROUND_IMAGE}" \
         -map 1:v:0 \
         -map 0:a:0 \
         -t 5 \
-        -vf "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,format=yuv420p" \
+        -vf "scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop=${VIDEO_WIDTH}:${VIDEO_HEIGHT},fps=${VIDEO_FPS},format=yuv420p" \
         -c:v libx264 \
-        -preset veryfast \
+        -preset "${X264_PRESET}" \
+        -threads "${FFMPEG_THREADS}" \
         -tune stillimage \
-        -profile:v high \
-        -level 4.2 \
+        -profile:v baseline \
+        -level 3.1 \
         -pix_fmt yuv420p \
-        -r 30 \
-        -g 60 \
-        -keyint_min 60 \
+        -r "${VIDEO_FPS}" \
+        -g "$((VIDEO_FPS * 2))" \
+        -keyint_min "$((VIDEO_FPS * 2))" \
         -sc_threshold 0 \
-        -b:v 4500k \
-        -maxrate 4500k \
-        -bufsize 9000k \
+        -b:v "${VIDEO_BITRATE}" \
+        -maxrate "${VIDEO_MAXRATE}" \
+        -bufsize "${VIDEO_BUFSIZE}" \
         -c:a aac \
-        -b:a 192k \
-        -ar 44100 \
-        -ac 2 \
+        -b:a "${AUDIO_BITRATE}" \
+        -ar "${AUDIO_RATE}" \
+        -ac "${AUDIO_CHANNELS}" \
         -af "aresample=async=1:first_pts=0" \
         -f null -
 
