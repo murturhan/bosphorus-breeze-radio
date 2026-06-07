@@ -58,6 +58,47 @@ load_env() {
 
     YOUTUBE_RTMP_URL="${YOUTUBE_RTMP_URL:-rtmp://a.rtmp.youtube.com/live2}"
     FFMPEG_LOG_LEVEL="${FFMPEG_LOG_LEVEL:-info}"
+    VIDEO_WIDTH="${VIDEO_WIDTH:-854}"
+    VIDEO_HEIGHT="${VIDEO_HEIGHT:-480}"
+    VIDEO_FPS="${VIDEO_FPS:-24}"
+    VIDEO_BITRATE="${VIDEO_BITRATE:-900k}"
+    VIDEO_MAXRATE="${VIDEO_MAXRATE:-1100k}"
+    VIDEO_BUFSIZE="${VIDEO_BUFSIZE:-2200k}"
+    X264_PRESET="${X264_PRESET:-ultrafast}"
+    FFMPEG_THREADS="${FFMPEG_THREADS:-1}"
+    AUDIO_BITRATE="${AUDIO_BITRATE:-128k}"
+    AUDIO_RATE="${AUDIO_RATE:-44100}"
+    AUDIO_CHANNELS="${AUDIO_CHANNELS:-2}"
+}
+
+validate_number() {
+    local name="$1"
+    local value="$2"
+
+    if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+        fail "${name} must be a whole number. Current value: ${value}"
+    fi
+}
+
+validate_stream_settings() {
+    validate_number "VIDEO_WIDTH" "${VIDEO_WIDTH}"
+    validate_number "VIDEO_HEIGHT" "${VIDEO_HEIGHT}"
+    validate_number "VIDEO_FPS" "${VIDEO_FPS}"
+    validate_number "FFMPEG_THREADS" "${FFMPEG_THREADS}"
+    validate_number "AUDIO_RATE" "${AUDIO_RATE}"
+    validate_number "AUDIO_CHANNELS" "${AUDIO_CHANNELS}"
+
+    if (( VIDEO_WIDTH < 320 || VIDEO_HEIGHT < 180 )); then
+        fail "Video resolution is too small. Use at least 320x180."
+    fi
+
+    if (( VIDEO_FPS < 1 || VIDEO_FPS > 30 )); then
+        fail "VIDEO_FPS must be between 1 and 30 on this VPS."
+    fi
+
+    if (( FFMPEG_THREADS < 1 || FFMPEG_THREADS > 2 )); then
+        fail "FFMPEG_THREADS must be 1 or 2 on this VPS."
+    fi
 }
 
 validate_stream_key() {
@@ -106,7 +147,7 @@ health_check_inputs() {
 
     # Confirm at least the first playlist item is decodable.
     # The concat demuxer itself handles all playlist paths during streaming.
-    ffmpeg -hide_banner -loglevel error -f concat -safe 0 -i "${PLAYLIST_FILE}" -t 1 -f null - >/dev/null \
+    timeout 20s ffmpeg -hide_banner -loglevel error -f concat -safe 0 -i "${PLAYLIST_FILE}" -t 1 -f null - >/dev/null \
         || fail "FFmpeg cannot read the generated playlist. Check your audio files."
 
     log "Health checks passed."
@@ -116,8 +157,8 @@ start_stream() {
     local output_url="${YOUTUBE_RTMP_URL}/${YOUTUBE_STREAM_KEY}"
 
     log "Starting FFmpeg stream to YouTube RTMP."
-    log "Video: 1920x1080, 30fps, H.264, YouTube optimized."
-    log "Audio: AAC 192k."
+    log "Video: ${VIDEO_WIDTH}x${VIDEO_HEIGHT}, ${VIDEO_FPS}fps, H.264, ${VIDEO_BITRATE}."
+    log "Audio: AAC ${AUDIO_BITRATE}. FFmpeg threads: ${FFMPEG_THREADS}."
 
     # exec replaces the shell with ffmpeg.
     # This helps systemd track and restart the actual streaming process.
@@ -133,28 +174,29 @@ start_stream() {
         -safe 0 \
         -i "${PLAYLIST_FILE}" \
         -loop 1 \
-        -framerate 30 \
+        -framerate "${VIDEO_FPS}" \
         -i "${BACKGROUND_IMAGE}" \
         -map 1:v:0 \
         -map 0:a:0 \
-        -vf "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30,format=yuv420p" \
+        -vf "scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop=${VIDEO_WIDTH}:${VIDEO_HEIGHT},fps=${VIDEO_FPS},format=yuv420p" \
         -c:v libx264 \
-        -preset veryfast \
+        -preset "${X264_PRESET}" \
+        -threads "${FFMPEG_THREADS}" \
         -tune stillimage \
-        -profile:v high \
-        -level 4.2 \
+        -profile:v baseline \
+        -level 3.1 \
         -pix_fmt yuv420p \
-        -r 30 \
-        -g 60 \
-        -keyint_min 60 \
+        -r "${VIDEO_FPS}" \
+        -g "$((VIDEO_FPS * 2))" \
+        -keyint_min "$((VIDEO_FPS * 2))" \
         -sc_threshold 0 \
-        -b:v 4500k \
-        -maxrate 4500k \
-        -bufsize 9000k \
+        -b:v "${VIDEO_BITRATE}" \
+        -maxrate "${VIDEO_MAXRATE}" \
+        -bufsize "${VIDEO_BUFSIZE}" \
         -c:a aac \
-        -b:a 192k \
-        -ar 44100 \
-        -ac 2 \
+        -b:a "${AUDIO_BITRATE}" \
+        -ar "${AUDIO_RATE}" \
+        -ac "${AUDIO_CHANNELS}" \
         -af "aresample=async=1:first_pts=0" \
         -f flv \
         -flvflags no_duration_filesize \
@@ -163,6 +205,7 @@ start_stream() {
 
 main() {
     load_env
+    validate_stream_settings
     validate_stream_key
     validate_background
     validate_tools
