@@ -10,9 +10,12 @@ Type=simple
 WorkingDirectory=/opt/bosphorus-breeze-radio
 ExecStart=/opt/bosphorus-breeze-radio/stream.sh
 
-# Restart the stream automatically if FFmpeg exits or crashes.
-Restart=always
-RestartSec=10
+# Restart the stream automatically if FFmpeg exits or crashes, but do not
+# spin forever every few seconds when configuration is wrong.
+Restart=on-failure
+RestartSec=20
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 # Give the process time to stop cleanly.
 TimeoutStopSec=30
@@ -24,8 +27,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=bosphorus-radio
 
-# Useful production limits for a small VPS.
-Nice=5
+# Useful production limits for a small VPS. These keep SSH and the admin panel
+# responsive even while FFmpeg is working.
+Nice=10
+CPUQuota=80%
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
 
