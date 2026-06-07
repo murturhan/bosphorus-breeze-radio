@@ -10,7 +10,8 @@
 # - Sets executable permissions on scripts.
 # - Creates .env from .env.example if .env does not exist.
 # - Installs the systemd services.
-# - Enables auto start on reboot.
+# - Enables only the lightweight admin panel on reboot.
+# - Leaves the heavy streaming service disabled until you start it from the UI.
 #
 # Run from the repository directory:
 #   sudo ./install.sh
@@ -82,7 +83,7 @@ prepare_files() {
         log "Creating .env from .env.example."
         cp "${SCRIPT_DIR}/.env.example" "${SCRIPT_DIR}/.env"
         chmod 600 "${SCRIPT_DIR}/.env"
-        log "Use the web admin panel or edit ${SCRIPT_DIR}/.env before streaming."
+        log "Edit ${SCRIPT_DIR}/.env and add your real YouTube stream key before starting the service."
     else
         log ".env already exists; leaving it unchanged."
     fi
@@ -91,25 +92,35 @@ prepare_files() {
 install_service() {
     [[ -f "${SERVICE_SOURCE}" ]] || fail "Missing systemd service file: ${SERVICE_SOURCE}"
 
-    log "Installing stream service: ${SERVICE_TARGET}"
+    log "Installing systemd service: ${SERVICE_TARGET}"
     cp "${SERVICE_SOURCE}" "${SERVICE_TARGET}"
+
+    # Replace the repository path in the service file with the actual install path.
+    # This keeps the repository portable no matter where it is cloned.
     sed -i "s|/opt/bosphorus-breeze-radio|${SCRIPT_DIR}|g" "${SERVICE_TARGET}"
 
     if [[ -f "${ADMIN_SERVICE_SOURCE}" ]]; then
         log "Installing admin panel service: ${ADMIN_SERVICE_TARGET}"
         cp "${ADMIN_SERVICE_SOURCE}" "${ADMIN_SERVICE_TARGET}"
         sed -i "s|/opt/bosphorus-breeze-radio|${SCRIPT_DIR}|g" "${ADMIN_SERVICE_TARGET}"
-    fi
 
-    log "Reloading systemd."
-    systemctl daemon-reload
+        log "Reloading systemd."
+        systemctl daemon-reload
 
-    log "Enabling stream auto start on reboot."
-    systemctl enable "${SERVICE_NAME}"
+        log "Disabling stream auto start on reboot for small VPS safety."
+        systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
 
-    if [[ -f "${ADMIN_SERVICE_TARGET}" ]]; then
-        log "Enabling admin panel auto start on reboot."
+        log "Enabling lightweight admin panel auto start on reboot."
         systemctl enable "${ADMIN_SERVICE_NAME}"
+
+        log "Starting lightweight admin panel."
+        systemctl restart "${ADMIN_SERVICE_NAME}"
+    else
+        log "Reloading systemd."
+        systemctl daemon-reload
+
+        log "Disabling stream auto start on reboot for small VPS safety."
+        systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
     fi
 }
 
@@ -118,21 +129,28 @@ print_next_steps() {
 
 Installation complete.
 
+Next steps:
+1. Put .mp3, .m4a, or .wav files into:
+   ${SCRIPT_DIR}/music
+
+2. Replace the starter image with your own JPG:
+   ${SCRIPT_DIR}/assets/background.jpg
+
+3. Edit your YouTube stream key:
+   sudo nano ${SCRIPT_DIR}/.env
+
+4. Test playlist generation:
+   ${SCRIPT_DIR}/update_playlist.sh
+
 Useful commands:
-   sudo systemctl start ${ADMIN_SERVICE_NAME}
+   sudo systemctl status ${ADMIN_SERVICE_NAME}
    sudo systemctl status ${SERVICE_NAME}
    sudo journalctl -u ${SERVICE_NAME} -f
    sudo systemctl stop ${SERVICE_NAME}
 
 Web admin panel:
-   1. Start the admin panel service:
-      sudo systemctl start ${ADMIN_SERVICE_NAME}
-
-   2. From your own computer, open an SSH tunnel:
-      ssh -L 8788:127.0.0.1:8788 ubuntu@YOUR_SERVER_IP
-
-   3. Open this in your browser:
-      http://127.0.0.1:8788
+   ssh -L 8788:127.0.0.1:8788 ubuntu@YOUR_SERVER_IP
+   Open http://127.0.0.1:8788 in your browser.
 
 EOF
 }
