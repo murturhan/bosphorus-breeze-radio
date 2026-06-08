@@ -15,7 +15,9 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLAYLIST_FILE="${SCRIPT_DIR}/playlist.txt"
-BACKGROUND_IMAGE="${SCRIPT_DIR}/assets/background.jpg"
+ASSETS_DIR="${SCRIPT_DIR}/assets"
+BACKGROUND_FILE=""
+BACKGROUND_KIND=""
 LOG_DIR="${SCRIPT_DIR}/logs"
 TEST_LOG="${LOG_DIR}/test.log"
 ENV_FILE="${SCRIPT_DIR}/.env"
@@ -53,6 +55,35 @@ load_safe_settings() {
     AUDIO_CHANNELS="${AUDIO_CHANNELS:-2}"
 }
 
+find_background() {
+    local candidates=(
+        "${ASSETS_DIR}/background.jpg"
+        "${ASSETS_DIR}/background.jpeg"
+        "${ASSETS_DIR}/background.png"
+        "${ASSETS_DIR}/background.mp4"
+        "${ASSETS_DIR}/background.mov"
+        "${ASSETS_DIR}/background.webm"
+        "${ASSETS_DIR}/background.mkv"
+    )
+    local candidate=""
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}" ]]; then
+            BACKGROUND_FILE="${candidate}"
+            break
+        fi
+    done
+
+    [[ -n "${BACKGROUND_FILE}" ]] || fail "Background not found. Upload assets/background.jpg, .png, .mp4, .mov, .webm, or .mkv."
+    [[ -s "${BACKGROUND_FILE}" ]] || fail "Background is empty: ${BACKGROUND_FILE}"
+
+    case "${BACKGROUND_FILE,,}" in
+        *.jpg|*.jpeg|*.png) BACKGROUND_KIND="image" ;;
+        *.mp4|*.mov|*.webm|*.mkv) BACKGROUND_KIND="video" ;;
+        *) fail "Unsupported background format: ${BACKGROUND_FILE}" ;;
+    esac
+}
+
 main() {
     log "Starting safe local test. This will not stream to YouTube."
     load_safe_settings
@@ -60,8 +91,7 @@ main() {
     command -v ffmpeg >/dev/null 2>&1 || fail "ffmpeg is not installed. Run sudo ./install.sh first."
     command -v ffprobe >/dev/null 2>&1 || fail "ffprobe is not installed. Run sudo ./install.sh first."
 
-    [[ -f "${BACKGROUND_IMAGE}" ]] || fail "Background image not found: ${BACKGROUND_IMAGE}"
-    [[ -s "${BACKGROUND_IMAGE}" ]] || fail "Background image is empty: ${BACKGROUND_IMAGE}"
+    find_background
 
     log "Generating playlist."
     "${SCRIPT_DIR}/update_playlist.sh"
@@ -69,11 +99,20 @@ main() {
     [[ -f "${PLAYLIST_FILE}" ]] || fail "Playlist was not created: ${PLAYLIST_FILE}"
     [[ -s "${PLAYLIST_FILE}" ]] || fail "Playlist is empty: ${PLAYLIST_FILE}"
 
-    log "Checking background image."
-    ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "${BACKGROUND_IMAGE}" >/dev/null \
-        || fail "FFmpeg cannot read assets/background.jpg."
+    log "Checking background file: ${BACKGROUND_FILE}."
+    ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "${BACKGROUND_FILE}" >/dev/null \
+        || fail "FFmpeg cannot read the background file."
 
     log "Running 5-second FFmpeg pipeline test."
+    local background_input_args=()
+    local tune_args=()
+    if [[ "${BACKGROUND_KIND}" == "image" ]]; then
+        background_input_args=(-loop 1 -framerate "${VIDEO_FPS}" -i "${BACKGROUND_FILE}")
+        tune_args=(-tune stillimage)
+    else
+        background_input_args=(-stream_loop -1 -i "${BACKGROUND_FILE}")
+    fi
+
     timeout 25s ffmpeg \
         -hide_banner \
         -loglevel warning \
@@ -81,9 +120,7 @@ main() {
         -f concat \
         -safe 0 \
         -i "${PLAYLIST_FILE}" \
-        -loop 1 \
-        -framerate "${VIDEO_FPS}" \
-        -i "${BACKGROUND_IMAGE}" \
+        "${background_input_args[@]}" \
         -map 1:v:0 \
         -map 0:a:0 \
         -t 5 \
@@ -91,7 +128,7 @@ main() {
         -c:v libx264 \
         -preset "${X264_PRESET}" \
         -threads "${FFMPEG_THREADS}" \
-        -tune stillimage \
+        "${tune_args[@]}" \
         -profile:v baseline \
         -level 3.1 \
         -pix_fmt yuv420p \
