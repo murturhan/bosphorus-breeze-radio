@@ -8,7 +8,7 @@
 # - Loads the YouTube stream key from .env.
 # - Validates required files before streaming.
 # - Regenerates playlist.txt automatically.
-# - Uses assets/background.jpg as a looping video background.
+# - Uses a still image or video from assets/background.* as the visual background.
 # - Streams audio from music/ forever.
 # - Writes useful logs for both journalctl and local troubleshooting.
 # - Performs simple health checks before handing the process to FFmpeg.
@@ -21,7 +21,9 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
 PLAYLIST_FILE="${SCRIPT_DIR}/playlist.txt"
-BACKGROUND_IMAGE="${SCRIPT_DIR}/assets/background.jpg"
+ASSETS_DIR="${SCRIPT_DIR}/assets"
+BACKGROUND_FILE=""
+BACKGROUND_KIND=""
 LOG_DIR="${SCRIPT_DIR}/logs"
 STREAM_LOG="${LOG_DIR}/stream.log"
 PID_FILE="${LOG_DIR}/ffmpeg.pid"
@@ -122,8 +124,32 @@ validate_stream_key() {
 }
 
 validate_background() {
-    [[ -f "${BACKGROUND_IMAGE}" ]] || fail "Background image not found: ${BACKGROUND_IMAGE}"
-    [[ -s "${BACKGROUND_IMAGE}" ]] || fail "Background image exists but is empty: ${BACKGROUND_IMAGE}"
+    local candidates=(
+        "${ASSETS_DIR}/background.jpg"
+        "${ASSETS_DIR}/background.jpeg"
+        "${ASSETS_DIR}/background.png"
+        "${ASSETS_DIR}/background.mp4"
+        "${ASSETS_DIR}/background.mov"
+        "${ASSETS_DIR}/background.webm"
+        "${ASSETS_DIR}/background.mkv"
+    )
+    local candidate=""
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}" ]]; then
+            BACKGROUND_FILE="${candidate}"
+            break
+        fi
+    done
+
+    [[ -n "${BACKGROUND_FILE}" ]] || fail "Background not found. Upload assets/background.jpg, .png, .mp4, .mov, .webm, or .mkv."
+    [[ -s "${BACKGROUND_FILE}" ]] || fail "Background exists but is empty: ${BACKGROUND_FILE}"
+
+    case "${BACKGROUND_FILE,,}" in
+        *.jpg|*.jpeg|*.png) BACKGROUND_KIND="image" ;;
+        *.mp4|*.mov|*.webm|*.mkv) BACKGROUND_KIND="video" ;;
+        *) fail "Unsupported background format: ${BACKGROUND_FILE}" ;;
+    esac
 }
 
 validate_tools() {
@@ -141,9 +167,9 @@ generate_playlist() {
 health_check_inputs() {
     log "Running input health checks."
 
-    # Confirm FFmpeg can decode the background image.
-    ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "${BACKGROUND_IMAGE}" >/dev/null \
-        || fail "FFmpeg cannot read the background image. Replace assets/background.jpg with a valid JPG."
+    # Confirm FFmpeg can decode the background image or video.
+    ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "${BACKGROUND_FILE}" >/dev/null \
+        || fail "FFmpeg cannot read the background. Upload a valid image or video file."
 
     # Confirm at least the first playlist item is decodable.
     # The concat demuxer itself handles all playlist paths during streaming.
@@ -155,10 +181,21 @@ health_check_inputs() {
 
 start_stream() {
     local output_url="${YOUTUBE_RTMP_URL}/${YOUTUBE_STREAM_KEY}"
+    local background_input_args=()
+    local tune_args=()
 
     log "Starting FFmpeg stream to YouTube RTMP."
     log "Video: ${VIDEO_WIDTH}x${VIDEO_HEIGHT}, ${VIDEO_FPS}fps, H.264, ${VIDEO_BITRATE}."
     log "Audio: AAC ${AUDIO_BITRATE}. FFmpeg threads: ${FFMPEG_THREADS}."
+    log "Background: ${BACKGROUND_FILE} (${BACKGROUND_KIND})."
+
+    if [[ "${BACKGROUND_KIND}" == "image" ]]; then
+        background_input_args=(-loop 1 -framerate "${VIDEO_FPS}" -i "${BACKGROUND_FILE}")
+        tune_args=(-tune stillimage)
+    else
+        background_input_args=(-stream_loop -1 -i "${BACKGROUND_FILE}")
+        tune_args=()
+    fi
 
     # exec replaces the shell with ffmpeg.
     # This helps systemd track and restart the actual streaming process.
@@ -173,16 +210,14 @@ start_stream() {
         -f concat \
         -safe 0 \
         -i "${PLAYLIST_FILE}" \
-        -loop 1 \
-        -framerate "${VIDEO_FPS}" \
-        -i "${BACKGROUND_IMAGE}" \
+        "${background_input_args[@]}" \
         -map 1:v:0 \
         -map 0:a:0 \
         -vf "scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop=${VIDEO_WIDTH}:${VIDEO_HEIGHT},fps=${VIDEO_FPS},format=yuv420p" \
         -c:v libx264 \
         -preset "${X264_PRESET}" \
         -threads "${FFMPEG_THREADS}" \
-        -tune stillimage \
+        "${tune_args[@]}" \
         -profile:v baseline \
         -level 3.1 \
         -pix_fmt yuv420p \
