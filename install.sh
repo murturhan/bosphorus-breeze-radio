@@ -133,8 +133,12 @@ Next steps:
 1. Put .mp3, .m4a, or .wav files into:
    ${SCRIPT_DIR}/music
 
-2. Replace the starter image with your own JPG:
+2. Replace the starter background with your own image or video:
    ${SCRIPT_DIR}/assets/background.jpg
+   ${SCRIPT_DIR}/assets/background.mp4
+
+   Supported background formats:
+   jpg, jpeg, png, mp4, mov, webm, mkv
 
 3. Edit your YouTube stream key:
    sudo nano ${SCRIPT_DIR}/.env
